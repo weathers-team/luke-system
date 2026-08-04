@@ -843,15 +843,16 @@ document.addEventListener("mousedown",function(e){
 });
 
 /* ===================================================================== sheets (mobile) */
-var moveT=null, moveMulti=false, capS="work";
+var moveT=null, moveMulti=false, capS="work", capN=0;
 function closeSheet(){ document.getElementById("sheet").classList.remove("on"); }
 function openMove(id,multi){
   moveT=id; moveMulti=!!multi;
   var cap=(id==="__cap__");
-  var head = cap ? '<h3>Quick capture</h3><div class="h4">goes to Inbox unless you pick</div>'
+  if(cap) capN=0;
+  var head = cap ? '<h3>Quick capture</h3><div class="h4" id="caph">tap a list below — or hit return to drop it in Inbox</div>'
     : (multi ? '<h3>Move '+Object.keys(pick).length+' tasks</h3><div class="h4">one tap, all of them land there</div>'
              : '<h3>Move to…</h3><div class="h4">including back to Inbox</div>');
-  var capUI = cap ? '<input class="fld" id="capin" placeholder="What needs doing?">'+
+  var capUI = cap ? '<input class="fld" id="capin" placeholder="What needs doing?" onkeydown="capKey(event)">'+
     '<div class="seg" style="margin-bottom:14px" id="capsrc">'+
     ["work","life","prop"].map(function(k){
       return '<b data-s="'+k+'" class="'+(capS===k?"on":"")+'" style="flex:1;text-align:center">'+NM[k]+'</b>';
@@ -860,7 +861,7 @@ function openMove(id,multi){
   document.getElementById("sc").innerHTML='<div class="grab"></div>'+head+capUI+
     LANES.map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+L+
       (here===L?'<span class="tick">✓</span>':'')+'</div>'; }).join("")+
-    '<div class="opt cancel" onclick="closeSheet()">Cancel</div>';
+    '<div class="opt cancel" onclick="closeSheet()">'+(cap?'Done':'Cancel')+'</div>';
   document.getElementById("sheet").classList.add("on");
   if(cap) setTimeout(function(){ var e=document.getElementById("capin"); if(e)e.focus(); },120);
   var cs=document.getElementById("capsrc");
@@ -869,11 +870,20 @@ function openMove(id,multi){
     this.querySelectorAll("b").forEach(function(x){ x.classList.toggle("on",x.dataset.s===capS); });
   });
 }
+function capKey(e){ if(e.key==="Enter"){ e.preventDefault(); doMove("INBOX"); } }
 function doMove(L){
   if(moveT==="__cap__"){
-    var v=document.getElementById("capin").value.trim();
+    var el=document.getElementById("capin");
+    var v=el?el.value.trim():"";
     if(!v){ closeSheet(); return; }
-    addTask(v,L,capS); closeSheet(); return;
+    /* rapid fire: add it, keep the sheet open, keep typing */
+    addTask(v,L,capS);
+    capN++;
+    el.value="";
+    var h=document.getElementById("caph");
+    if(h) h.textContent=capN+" added — keep going, or tap Done";
+    el.focus();
+    return;
   }
   if(moveMulti){ mv(Object.keys(pick),L); closeSheet(); return; }
   mv([moveT],L); closeSheet();
