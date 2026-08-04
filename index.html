@@ -1031,8 +1031,7 @@ function progHTML(){
   var sz=get("size",""); if(sz) document.body.style.setProperty("--task",sz+"px");
   if(get("side","0")==="1"){ document.getElementById("side").classList.add("min");
     document.getElementById("grip").innerHTML="&rsaquo;&rsaquo;"; }
-  view=get("view","inbox");
-  if(["inbox","now","work","life","prop"].indexOf(view)<0) view="inbox";
+  view="work";   /* always open on Business — hard default, last-used tab is ignored on purpose */
   draw();
   refresh(true);
   setInterval(function(){ refresh(false); }, CFG.POLL);
