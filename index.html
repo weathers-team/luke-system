@@ -446,7 +446,7 @@ var T=[], view="inbox", openK={}, shut={}, addOpen=null, pick={}, cur=null, anch
     Q=[], sending=false, lastErr="";
 
 /* property tracker state */
-var propMode="tasks", R={rent:[],props:[]}, rready=false, rerr="", propSel=0, payT=null, lastRentFeed=0;
+var propMode="tasks", R={rent:[],props:[]}, rready=false, rerr="", propSel=0, payT=null, lastRentFeed=0, feedBusy=false;
 var MONF=["January","February","March","April","May","June","July","August","September","October","November","December"];
 
 /* ===================================================================== storage */
@@ -493,6 +493,7 @@ function status(){
   if(!ready){ el.textContent="connecting"; el.classList.add("busy"); return; }
   if(lastErr){ el.textContent="problem"; el.classList.add("bad"); return; }
   if(Q.length||sending){ el.textContent="saving "+(Q.length||1); el.classList.add("busy"); return; }
+  if(feedBusy){ el.textContent="updating"; el.classList.add("busy"); return; }
   el.textContent="saved";
 }
 function bannerOn(html){
@@ -539,11 +540,14 @@ function refresh(force){
     if(Date.now()-lastWrite < CFG.QUIET) return;       // Coda needs a beat to settle
     if(document.hidden) return;
   }
+  feedBusy=true; status();
   fetch(url({action:"feed",list:"all",fresh:force?1:undefined}),{cache:"no-store"})
     .then(function(r){ return r.json(); })
     .then(function(j){
+      feedBusy=false;
       if(!j || j.ok!==true) throw new Error((j&&j.error)||"unknown error");
       T=j.tasks.map(normalize);
+      try{ save("cache",JSON.stringify(j.tasks)); }catch(e){}
       if(firstOpen){
         T.forEach(function(t){ if(kids(t.id).length) openK[t.id]=true; });
         firstOpen=false;
@@ -553,6 +557,7 @@ function refresh(force){
       draw();
     })
     .catch(function(e){
+      feedBusy=false;
       lastErr=String(e.message||e); ready=true;
       var quota=lastErr.indexOf("too many times")>=0;
       bannerOn(quota
@@ -574,6 +579,7 @@ function rentFeed(force){
     .then(function(j){
       if(!j || j.ok!==true) throw new Error((j&&j.error)||"unknown error");
       R={rent:j.rent||[],props:j.props||[]};
+      try{ save("rcache",JSON.stringify(R)); }catch(e){}
       rready=true; rerr=""; lastRentFeed=Date.now();
       draw();
     })
@@ -1245,6 +1251,19 @@ function progHTML(){
     document.getElementById("grip").innerHTML="&rsaquo;&rsaquo;"; }
   view="work";   /* always open on Business — hard default, last-used tab is ignored on purpose */
   propMode=get("pm","tasks");
+  /* instant open: paint the last-seen list from this phone, then fetch fresh in the background */
+  try{
+    var cc=get("cache",null);
+    if(cc){
+      T=JSON.parse(cc).map(normalize);
+      T.forEach(function(t){ if(kids(t.id).length) openK[t.id]=true; });
+      firstOpen=false; ready=true;
+    }
+  }catch(e){}
+  try{
+    var rc=get("rcache",null);
+    if(rc){ var ro=JSON.parse(rc); R={rent:ro.rent||[],props:ro.props||[]}; rready=true; }
+  }catch(e){}
   draw();
   refresh(true);
   setInterval(function(){ refresh(false); if(view==="prop"&&propMode==="tracker") rentFeed(false); }, CFG.POLL);
