@@ -1,0 +1,346 @@
+/**
+ * LUKE SYSTEM — proxy  (v3)
+ * Completely separate from the Command Center script. Shares nothing with it.
+ *
+ * SETUP (Project Settings → Script Properties):
+ *   CODA_TOKEN   your Coda API token
+ *   ACCESS_KEY   the ?k= value the page must send
+ *
+ * Locked to one doc. Any request naming a different doc is refused.
+ *
+ * v2 changes:
+ *   - parent lookups resolved to real row ids server-side (costs zero extra fetches)
+ *   - short feed cache so a page left open all day can't drain the UrlFetch quota
+ *   - rename + setparent actions
+ *   - every response reports how many UrlFetch calls it used
+ *
+ * v3 changes:
+ *   - rentfeed: reads the Rent + Property Info tables for the in-app tracker
+ *   - rentpay: check off rent (full or partial) — sets Received, Paid, Date received
+ *   - nothing about the task actions changed
+ */
+
+var DOC = 'YFgsod2_bk';                 // Luke doc — hard locked
+var API = 'https://coda.io/apis/v1';
+var FEED_CACHE_SEC = 20;                // ?fresh=1 bypasses
+
+var TABLES = {
+  work: { id: 'grid-n9voTkBQIK', name: 'Business' },
+  life: { id: 'grid-X1y9S0eG5G', name: 'Personal' },
+  prop: { id: 'grid-iAkdUSXbk2', name: 'Property' }
+};
+
+var RENT_TABLE = 'grid-Leod2DAtka';        // Rent — one row per property per month
+var INFO_TABLE = 'grid-_VpUW5iqOZ';        // Property Info — one row per property
+
+var LANES = ['INBOX','TODAY','THIS WEEK','MONTHLY','THIS YEAR','LONG TERM GOALS'];
+var REPEAT_DAYS = { Daily:1, Weekly:7, Monthly:30, Quarterly:90, Yearly:365 };
+
+var FETCHES = 0;   // counted per request so the client can see its own cost
+
+/* ---------- plumbing ---------- */
+
+function prop_(k){ return PropertiesService.getScriptProperties().getProperty(k); }
+
+function coda_(method, path, body){
+  FETCHES++;
+  var res = UrlFetchApp.fetch(API + path, {
+    method: method,
+    headers: { Authorization: 'Bearer ' + prop_('CODA_TOKEN') },
+    contentType: 'application/json',
+    payload: body ? JSON.stringify(body) : undefined,
+    muteHttpExceptions: true
+  });
+  var code = res.getResponseCode();
+  if (code >= 300) throw new Error('Coda ' + code + ': ' + res.getContentText().slice(0, 300));
+  var t = res.getContentText();
+  return t ? JSON.parse(t) : {};
+}
+
+/* column ids are looked up by name and cached, so adding a column never breaks this */
+function cols_(listKey){
+  var cache = CacheService.getScriptCache();
+  var ck = 'cols_' + listKey;
+  var hit = cache.get(ck);
+  if (hit) return JSON.parse(hit);
+  var r = coda_('get', '/docs/' + DOC + '/tables/' + TABLES[listKey].id + '/columns?limit=100');
+  var map = {};
+  r.items.forEach(function(c){ map[c.name] = c.id; });
+  cache.put(ck, JSON.stringify(map), 1800);
+  return map;
+}
+
+function out_(obj){
+  obj.fetches = FETCHES;
+  return ContentService.createTextOutput(JSON.stringify(obj))
+                       .setMimeType(ContentService.MimeType.JSON);
+}
+
+function today_(){
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+function plusDays_(n){
+  var d = new Date(); d.setDate(d.getDate() + n);
+  return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+function iso_(v){
+  if (!v) return null;
+  var m = String(v).match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : null;                 // strip the time + offset Coda tacks on
+}
+
+function colsT_(tableId){
+  var cache = CacheService.getScriptCache();
+  var ck = 'colsT_' + tableId;
+  var hit = cache.get(ck);
+  if (hit) return JSON.parse(hit);
+  var r = coda_('get', '/docs/' + DOC + '/tables/' + tableId + '/columns?limit=100');
+  var map = {};
+  r.items.forEach(function(c){ map[c.name] = c.id; });
+  cache.put(ck, JSON.stringify(map), 1800);
+  return map;
+}
+function rowsT_(tableId){
+  var rows = [], token = null;
+  do {
+    var q = '/docs/' + DOC + '/tables/' + tableId +
+            '/rows?limit=200&valueFormat=simpleWithArrays' + (token ? '&pageToken=' + token : '');
+    var r = coda_('get', q);
+    rows = rows.concat(r.items || []);
+    token = r.nextPageToken || null;
+  } while (token);
+  return rows;
+}
+function num_(v){ var n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g,'')); return isNaN(n) ? 0 : n; }
+
+/* ---------- reading ---------- */
+
+function readList_(listKey){
+  var c = cols_(listKey);
+  var rows = [], token = null;
+  do {
+    var q = '/docs/' + DOC + '/tables/' + TABLES[listKey].id +
+            '/rows?limit=200&valueFormat=simpleWithArrays' + (token ? '&pageToken=' + token : '');
+    var r = coda_('get', q);
+    rows = rows.concat(r.items || []);
+    token = r.nextPageToken || null;
+  } while (token);
+
+  var mapped = rows.map(function(row){
+    var v = row.values;
+    function f(name){ var id = c[name]; return id === undefined ? null : v[id]; }
+    var par = f('Parent');
+    return {
+      id:         row.id,
+      list:       listKey,
+      task:       f('Task') || '',
+      done:       f('Done') === true,
+      lane:       f('List') || 'INBOX',
+      area:       f('Area') || null,
+      waiting:    f('Waiting on') || null,
+      repeat:     f('Repeat') || null,
+      due:        iso_(f('Due')),
+      notuntil:   iso_(f('Not until')),
+      notes:      f('Notes') || null,
+      important:  f('Important') === true,
+      donedate:   iso_(f('Done date')),
+      parentName: (par && String(par).length) ? String(par) : null,
+      parent:     null
+    };
+  });
+
+  /* Coda hands lookup columns back as the display text, not a row id.
+     Resolve it against the rows we already have — zero extra fetches.
+     If two tasks share the exact same name the first one wins; rare, and
+     the worst case is a sub-task hanging under the wrong twin. */
+  var byName = {};
+  mapped.forEach(function(t){ if (t.task && !byName[t.task]) byName[t.task] = t.id; });
+  mapped.forEach(function(t){ if (t.parentName) t.parent = byName[t.parentName] || null; });
+
+  return mapped;
+}
+
+/* ---------- writing ---------- */
+
+function put_(listKey, rowId, cells){
+  return coda_('put', '/docs/' + DOC + '/tables/' + TABLES[listKey].id + '/rows/' + rowId,
+    { row: { cells: cells } });
+}
+function cell_(listKey, name, value){
+  var id = cols_(listKey)[name];
+  if (!id) throw new Error('No column named "' + name + '" on ' + TABLES[listKey].name);
+  return { column: id, value: value };
+}
+function bustFeed_(){
+  CacheService.getScriptCache().removeAll(['feed_all','feed_work','feed_life','feed_prop']);
+}
+function bustRent_(){
+  CacheService.getScriptCache().removeAll(['feed_rent']);
+}
+
+/* ---------- entry point ---------- */
+
+function doGet(e){
+  FETCHES = 0;
+  try {
+    var p = e.parameter || {};
+
+    if (!prop_('ACCESS_KEY') || p.k !== prop_('ACCESS_KEY'))
+      return out_({ ok:false, error:'bad key' });
+
+    if (p.doc && p.doc !== DOC)
+      return out_({ ok:false, error:'wrong doc — this script only serves ' + DOC });
+
+    var list = p.list;
+    if (list && list !== 'all' && !TABLES[list])
+      return out_({ ok:false, error:'unknown list' });
+
+    switch (p.action) {
+
+      case 'ping':
+        return out_({ ok:true, doc:DOC, lists:Object.keys(TABLES), time:new Date().toISOString() });
+
+      case 'feed': {
+        var key = 'feed_' + (list || 'all');
+        var cache = CacheService.getScriptCache();
+        if (p.fresh !== '1') {
+          var hit = cache.get(key);
+          if (hit) return out_({ ok:true, cached:true, tasks:JSON.parse(hit), ts:new Date().toISOString() });
+        }
+        var keys = (!list || list === 'all') ? Object.keys(TABLES) : [list];
+        var tasks = [];
+        keys.forEach(function(k){ tasks = tasks.concat(readList_(k)); });
+        try { cache.put(key, JSON.stringify(tasks), FEED_CACHE_SEC); } catch (ignore) {}
+        return out_({ ok:true, cached:false, tasks:tasks, ts:new Date().toISOString() });
+      }
+
+      case 'setdone': {
+        var val = (p.val === '1' || p.val === 'true');
+        var cells = [ cell_(list, 'Done', val) ];
+        if (cols_(list)['Done date']) cells.push(cell_(list, 'Done date', val ? today_() : ''));
+        put_(list, p.row, cells);
+        bustFeed_();
+        return out_({ ok:true, row:p.row, done:val });
+      }
+
+      case 'lane': {
+        var lane = p.lane;
+        if (LANES.indexOf(lane) < 0) return out_({ ok:false, error:'unknown lane' });
+        put_(list, p.row, [ cell_(list, 'List', lane) ]);
+        bustFeed_();
+        return out_({ ok:true, row:p.row, lane:lane });
+      }
+
+      case 'important': {
+        var on = (p.val === '1' || p.val === 'true');
+        put_(list, p.row, [ cell_(list, 'Important', on) ]);
+        bustFeed_();
+        return out_({ ok:true, row:p.row, important:on });
+      }
+
+      case 'rename': {
+        var txt = (p.task || '').trim();
+        if (!txt) return out_({ ok:false, error:'empty task' });
+        put_(list, p.row, [ cell_(list, 'Task', txt) ]);
+        bustFeed_();
+        return out_({ ok:true, row:p.row, task:txt });
+      }
+
+      /* Coda matches lookup columns on the display text. '' clears it. */
+      case 'setparent': {
+        put_(list, p.row, [ cell_(list, 'Parent', p.parent || '') ]);
+        bustFeed_();
+        return out_({ ok:true, row:p.row, parent:p.parent || null });
+      }
+
+      /* repeating task knocked out: push the due date, stamp the date, stay open */
+      case 'didit': {
+        var rep = p.repeat || 'Daily';
+        var next = plusDays_(REPEAT_DAYS[rep] || 1);
+        var cells2 = [ cell_(list, 'Due', next), cell_(list, 'Done', false) ];
+        if (cols_(list)['Done date']) cells2.push(cell_(list, 'Done date', today_()));
+        put_(list, p.row, cells2);
+        bustFeed_();
+        return out_({ ok:true, row:p.row, due:next });
+      }
+
+      case 'add': {
+        var lane2 = LANES.indexOf(p.lane) >= 0 ? p.lane : 'INBOX';
+        var cs = [ cell_(list, 'Task', p.task || ''), cell_(list, 'List', lane2) ];
+        if (p.parent) cs.push(cell_(list, 'Parent', p.parent));
+        var r = coda_('post', '/docs/' + DOC + '/tables/' + TABLES[list].id + '/rows',
+                      { rows: [ { cells: cs } ] });
+        bustFeed_();
+        return out_({ ok:true, added:r.addedRowIds || [] });
+      }
+
+      case 'rentfeed': {
+        var rc = CacheService.getScriptCache();
+        if (p.fresh !== '1') {
+          var rhit = rc.get('feed_rent');
+          if (rhit) { var o = JSON.parse(rhit); o.cached = true; return out_(o); }
+        }
+        var cr = colsT_(RENT_TABLE), ci = colsT_(INFO_TABLE);
+        var rent = rowsT_(RENT_TABLE).map(function(row){
+          var v = row.values;
+          function f(m,name){ var id = m[name]; return id === undefined ? null : v[id]; }
+          return {
+            id: row.id,
+            property: f(cr,'Property') || '',
+            month: iso_(f(cr,'Month')),
+            paid: f(cr,'Paid') === true,
+            rent: num_(f(cr,'Rent')),
+            received: num_(f(cr,'Received')),
+            datereceived: iso_(f(cr,'Date received')),
+            notes: f(cr,'Notes') || null
+          };
+        });
+        var props = rowsT_(INFO_TABLE).map(function(row){
+          var v = row.values;
+          var o = { id: row.id };
+          for (var name in ci) o[name] = (v[ci[name]] == null ? null : v[ci[name]]);
+          return o;
+        });
+        var payload = { ok:true, cached:false, rent:rent, props:props, ts:new Date().toISOString() };
+        try { rc.put('feed_rent', JSON.stringify(payload), FEED_CACHE_SEC); } catch (ignore) {}
+        return out_(payload);
+      }
+
+      /* rent checked off — full or partial. amount = dollars received (total for the month). */
+      case 'rentpay': {
+        var cr2 = colsT_(RENT_TABLE);
+        var amt = num_(p.amount);
+        var isPaid = (p.paid === '1' || p.paid === 'true');
+        var cells3 = [
+          { column: cr2['Received'], value: amt },
+          { column: cr2['Paid'], value: isPaid },
+          { column: cr2['Date received'], value: (amt > 0 || isPaid) ? today_() : '' }
+        ];
+        coda_('put', '/docs/' + DOC + '/tables/' + RENT_TABLE + '/rows/' + p.row, { row: { cells: cells3 } });
+        bustRent_();
+        return out_({ ok:true, row:p.row, paid:isPaid, received:amt });
+      }
+
+      default:
+        return out_({ ok:false, error:'unknown action' });
+    }
+
+  } catch (err) {
+    return out_({ ok:false, error:String(err) });
+  }
+}
+
+/* Run this once from the editor after pasting the token — it proves the token works
+   and prints how many tasks are in each list. */
+function testConnection(){
+  FETCHES = 0;
+  var out = [];
+  Object.keys(TABLES).forEach(function(k){
+    var rows = readList_(k);
+    out.push(TABLES[k].name + ': ' + rows.length + ' rows, ' +
+             rows.filter(function(t){ return !t.done; }).length + ' open, ' +
+             rows.filter(function(t){ return t.parent; }).length + ' sub-tasks linked');
+  });
+  Logger.log(out.join('\n'));
+  Logger.log('UrlFetch calls used by this test: ' + FETCHES);
+}
