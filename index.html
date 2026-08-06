@@ -237,6 +237,45 @@ h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.2px;}
 /* mobile-only chrome, hidden by default */
 .fab,.tabbar,.sheet,.triage{display:none;}
 
+/* ============================================================ property tracker */
+.pseg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;margin:0 0 8px;max-width:820px;}
+.pseg b{flex:1;text-align:center;font-weight:600;font-size:13px;color:var(--dim);padding:8px 0;cursor:pointer;}
+.pseg b.on{background:var(--surface);color:var(--text);}
+.cb.paid{background:var(--grn);border-color:var(--grn);}
+.cb.paid::after{content:"\2713";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--bg);font-weight:900;}
+.cb.half{border-color:var(--amber);}
+.cb.half::after{content:"";position:absolute;left:20%;top:calc(50% - 1.5px);width:60%;height:3px;background:var(--amber);border-radius:2px;}
+.rt .t{cursor:pointer;white-space:normal;line-height:1.3;}
+.rt .rsub{display:block;color:var(--amber);font-size:12px;margin-top:1px;}
+.ramt{flex:0 0 auto;color:var(--dim);font-size:12.5px;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;cursor:pointer;}
+.ramt.late{color:var(--alarm);font-weight:600;}
+.ramt.part{color:var(--amber);}
+.ovh,.ovr{display:flex;gap:8px;padding:8px 2px;border-bottom:0.5px solid var(--line2);font-size:13px;align-items:baseline;}
+.ovh{font-size:9.5px;font-weight:750;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:7px 2px 4px;border-bottom:none;}
+.ovr .p,.ovh .p{flex:1;min-width:0;}
+.ovr .v,.ovh .v{flex:0 0 76px;text-align:right;color:var(--dim);font-variant-numeric:tabular-nums;}
+.ovh .v{color:var(--faint);}
+.ovr .v.warn{color:var(--alarm);}
+.ovr.tot .p,.ovr.tot .v{color:var(--text);font-weight:650;}
+.pchips{display:flex;gap:7px;overflow-x:auto;padding:2px 0 12px;-webkit-overflow-scrolling:touch;}
+.pchip{flex:0 0 auto;font-size:12.5px;color:var(--dim);border:1px solid var(--line);border-radius:99px;padding:6px 13px;white-space:nowrap;cursor:pointer;}
+.pchip.on{background:var(--surface);color:var(--text);border-color:var(--f3);}
+.pkv{display:flex;gap:12px;padding:8px 2px;border-bottom:0.5px solid var(--line2);font-size:13.5px;}
+.pkv span:first-child{color:var(--faint);flex:0 0 128px;font-size:12.5px;padding-top:1px;}
+.pkv span:last-child{flex:1;min-width:0;overflow-wrap:break-word;}
+.payfull{display:block;background:var(--accent);color:#fff;border-radius:10px;text-align:center;font-weight:700;padding:12px;margin:2px 0 8px;cursor:pointer;}
+.payfull.amberbtn{background:var(--amber);color:#fff;}
+@media(min-width:861px){
+  .sheet.on{display:block;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;}
+  .sheet .sc{position:absolute;left:50%;top:14vh;transform:translateX(-50%);width:400px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px 18px;max-height:70vh;overflow-y:auto;}
+  .sheet .grab{display:none;}
+  .sheet .sc h3{margin:0 0 3px;font-size:16px;}
+  .sheet .sc .h4{color:var(--faint);font-size:12px;margin-bottom:13px;}
+  .sheet .opt{display:flex;align-items:center;gap:12px;padding:11px 13px;border-radius:10px;background:var(--bg);border:1px solid var(--line);margin-bottom:7px;font-size:14px;font-weight:600;cursor:pointer;}
+  .sheet .opt.cancel{background:transparent;border-color:transparent;color:var(--faint);justify-content:center;}
+  .sheet .fld{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:11px;color:var(--text);font:inherit;font-size:14px;margin-bottom:10px;}
+}
+
 /* ============================================================ mobile */
 @media(max-width:860px){
   body{--task:15px;}
@@ -406,6 +445,10 @@ var T=[], view="inbox", openK={}, shut={}, addOpen=null, pick={}, cur=null, anch
     editing=null, stack=[], flat=[], ready=false, lastWrite=0, lastFeed=0, firstOpen=true,
     Q=[], sending=false, lastErr="";
 
+/* property tracker state */
+var propMode="tasks", R={rent:[],props:[]}, rready=false, rerr="", propSel=0, payT=null, lastRentFeed=0;
+var MONF=["January","February","March","April","May","June","July","August","September","October","November","December"];
+
 /* ===================================================================== storage */
 function save(k,v){ try{ localStorage.setItem("luke."+k,v); }catch(e){} }
 function get(k,d){ try{ var v=localStorage.getItem("luke."+k); return v===null?d:v; }catch(e){ return d; } }
@@ -518,6 +561,27 @@ function refresh(force){
       draw();
     });
 }
+
+/* rent + property info feed — same guards as refresh() */
+function rentFeed(force){
+  if(!force){
+    if(sending||Q.length) return;
+    if(Date.now()-lastWrite < CFG.QUIET) return;
+    if(document.hidden) return;
+  }
+  fetch(url({action:"rentfeed",fresh:force?1:undefined}),{cache:"no-store"})
+    .then(function(r){ return r.json(); })
+    .then(function(j){
+      if(!j || j.ok!==true) throw new Error((j&&j.error)||"unknown error");
+      R={rent:j.rent||[],props:j.props||[]};
+      rready=true; rerr=""; lastRentFeed=Date.now();
+      draw();
+    })
+    .catch(function(e){ rerr=String(e.message||e); rready=true; draw(); });
+}
+function money(n){ n=Math.round(n||0); return "$"+String(n).replace(/\B(?=(\d{3})+(?!\d))/g,","); }
+function pnum(v){ var n=parseFloat(String(v==null?"":v).replace(/[^0-9.\-]/g,"")); return isNaN(n)?0:n; }
+function findRent(id){ return R.rent.filter(function(x){return x.id===id;})[0]; }
 
 /* ===================================================================== undo */
 function snap(m){ stack.push({d:JSON.parse(JSON.stringify(T)),m:m}); if(stack.length>40)stack.shift(); toast(m); }
@@ -662,13 +726,23 @@ function draw(){
   } else if(view==="inbox"){
     h+=group("INBOX",T.filter(function(t){return !t.p&&!t.done&&t.l==="INBOX"&&inQ(t);}),"",false,"INBOX");
   } else {
-    LANES.forEach(function(L){
-      var it=T.filter(function(t){return t.s===view&&t.l===L&&!t.p&&!t.done&&inQ(t);});
-      if(qv()&&!it.length) return;
-      h+=group(L,it,"",false,L);
-    });
+    if(view==="prop"){
+      h+='<div class="pseg"><b class="'+(propMode==="tasks"?"on":"")+'" onclick="setPM(\'tasks\')">Tasks</b>'+
+         '<b class="'+(propMode==="tracker"?"on":"")+'" onclick="setPM(\'tracker\')">Tracker</b></div>';
+    }
+    if(view==="prop"&&propMode==="tracker"){
+      h+=trackerHTML();
+    } else {
+      LANES.forEach(function(L){
+        var it=T.filter(function(t){return t.s===view&&t.l===L&&!t.p&&!t.done&&inQ(t);});
+        if(qv()&&!it.length) return;
+        h+=group(L,it,"",false,L);
+      });
+    }
   }
-  document.getElementById("body").innerHTML = h + (ready?progHTML():"");
+  var tracker=(view==="prop"&&propMode==="tracker");
+  document.querySelector(".searchwrap").style.display=tracker?"none":"";
+  document.getElementById("body").innerHTML = h + (ready&&!tracker?progHTML():"");
   if(addOpen){ var e=document.getElementById("qa-"+addOpen.replace(/ /g,"_")); if(e)e.focus(); }
   if(editing){ var i=document.querySelector('.r[data-id="'+editing+'"] input'); if(i){i.focus();i.select();} }
   status();
@@ -679,7 +753,135 @@ function nv(a){
     '<span class="ic">'+a[1]+'</span><span class="lbl">'+a[2]+'</span><span class="ct">'+a[3]+'</span></div>';
 }
 function go(v){ view=v; pick={}; cur=null; addOpen=null;
-  document.getElementById("scroll").scrollTop=0; save("view",v); draw(); }
+  document.getElementById("scroll").scrollTop=0; save("view",v);
+  if(v==="prop"&&propMode==="tracker"&&!rready) rentFeed(true);
+  draw(); }
+
+/* ===================================================================== property tracker */
+function setPM(m){ propMode=m; save("pm",m); if(m==="tracker"&&!rready) rentFeed(true); draw(); }
+function shAddr(s){ return String(s).replace(/ (Dr|Trail|Ct|Rd|Court|Road|Drive)$/,""); }
+function leasePast(s){
+  var m=String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(!m) return false;
+  return new Date(+m[3],+m[1]-1,+m[2]) < new Date();
+}
+function trackerHTML(){
+  if(!rready) return '<div class="loading">Loading the tracker…</div>';
+  if(rerr) return '<div class="allclear">Can’t reach the tracker. '+esc(rerr)+
+    ' <u style="cursor:pointer;color:var(--accent)" onclick="rentFeed(true)">Try again</u></div>';
+  var h="", mk=todayISO().slice(0,7), mn=MONF[+mk.slice(5,7)-1];
+  var rows=R.rent.filter(function(r){ return (r.month||"").slice(0,7)===mk; });
+  rows.sort(function(a,b){ return a.property<b.property?-1:1; });
+  var got=rows.filter(function(r){return r.paid;}).length;
+  var part=rows.filter(function(r){return !r.paid&&r.received>0;}).length;
+  var out=rows.length-got-part;
+  h+='<div class="lane"><div class="lh"><span class="n">Rent — '+mn+'</span><span class="c">'+
+     got+' in'+(part?' · '+part+' partial':'')+(out?' · '+out+' out':'')+'</span></div>';
+  if(!rows.length) h+='<div class="allclear">No '+mn+' rows in the Coda Rent table yet.</div>';
+  rows.forEach(function(r){
+    var cls=r.paid?"paid":(r.received>0?"half":"");
+    var right, sub="";
+    if(r.paid) right='<span class="ramt">'+money(r.rent)+(r.datereceived?' · '+fmt(r.datereceived):'')+'</span>';
+    else if(r.received>0){
+      right='<span class="ramt part">'+money(r.rent-r.received)+' left</span>';
+      sub='<span class="rsub">partial — '+money(r.received)+' of '+money(r.rent)+
+          (r.datereceived?' · '+fmt(r.datereceived):'')+'</span>';
+    } else right='<span class="ramt late">'+money(r.rent)+' · not yet</span>';
+    h+='<div class="r rt"><div class="cb '+cls+'" onclick="rentTap(\''+r.id+'\')"></div>'+
+       '<div class="t" onclick="openPaySheet(\''+r.id+'\')">'+esc(r.property)+sub+'</div>'+
+       '<span onclick="openPaySheet(\''+r.id+'\')">'+right+'</span></div>';
+  });
+  h+='</div>';
+  var ov=R.props.filter(function(p){ return pnum(p["Monthly rent"])>0; });
+  if(ov.length){
+    h+='<div class="lane"><div class="lh"><span class="n">All properties</span></div>'+
+       '<div class="ovh"><span class="p"></span><span class="v">Rent</span><span class="v">Cashflow</span><span class="v">Lease ends</span></div>';
+    var tr=0,tc=0;
+    ov.forEach(function(p){
+      var le=String(p["Lease end"]||"—");
+      tr+=pnum(p["Monthly rent"]); tc+=pnum(p["Monthly cashflow"]);
+      h+='<div class="ovr"><span class="p">'+esc(p.Property||"")+'</span>'+
+         '<span class="v">'+money(pnum(p["Monthly rent"]))+'</span>'+
+         '<span class="v">'+money(pnum(p["Monthly cashflow"]))+'</span>'+
+         '<span class="v'+(leasePast(le)?" warn":"")+'">'+esc(le)+'</span></div>';
+    });
+    h+='<div class="ovr tot"><span class="p">Total</span><span class="v">'+money(tr)+
+       '</span><span class="v">'+money(tc)+'</span><span class="v"></span></div></div>';
+  }
+  if(R.props.length){
+    if(propSel>=R.props.length) propSel=0;
+    h+='<div class="lane"><div class="lh" style="border-bottom:none"><span class="n">Property info</span></div>'+
+       '<div class="pchips">'+R.props.map(function(p,i){
+         return '<span class="pchip '+(i===propSel?"on":"")+'" onclick="propSel='+i+';draw()">'+
+                esc(shAddr(p.Property||""))+'</span>';
+       }).join("")+'</div>'+infoHTML(R.props[propSel])+'</div>';
+  }
+  return h;
+}
+function infoHTML(p){
+  var S=[["Tenant",[["Tenant name","Tenant"],["Contact","Tenant contact"]]],
+    ["Lease & financial",[["Lease start","Lease start"],["Lease ends","Lease end"],
+      ["Monthly rent","Monthly rent"],["Cashflow","Monthly cashflow"],
+      ["Mortgage","Mortgage company"],["Mortgage payment","Mortgage payment"],["Insurance","Insurance"]]],
+    ["HOA",[["HOA","HOA"],["Contact","HOA contact"],["Dues","HOA dues"],
+      ["Due date","HOA due date"],["Login","HOA login"]]],
+    ["Termite",[["Company","Termite company"],["Renews","Termite renewal"],["Amount","Termite amount"]]],
+    ["Systems",[["HVAC filter","HVAC filter"]]],
+    ["Notes",[["Notes","Notes"]]]];
+  var h="";
+  S.forEach(function(sec){
+    var rows="";
+    sec[1].forEach(function(kv){
+      var v=p[kv[1]];
+      if(v==null||String(v).trim()==="") return;
+      var vs;
+      if(kv[1]==="Mortgage payment") vs=money(pnum(v))+"/mo";
+      else vs=esc(String(v));
+      if(kv[1]==="Lease end"&&leasePast(v)) vs='<span style="color:var(--alarm)">'+vs+' — expired?</span>';
+      rows+='<div class="pkv"><span>'+kv[0]+'</span><span>'+vs+'</span></div>';
+    });
+    if(rows) h+='<div class="lh"><span class="n">'+sec[0]+'</span></div>'+rows;
+  });
+  return h;
+}
+function rentTap(id){
+  var r=findRent(id); if(!r) return;
+  if(r.paid){
+    r.paid=false; r.received=0; r.datereceived=null; draw();
+    toast("Unmarked — "+sh(r.property),true);
+    send({action:"rentpay",row:id,amount:0,paid:0}); return;
+  }
+  r.paid=true; r.received=r.rent; r.datereceived=todayISO(); draw();
+  toast("Rent in — "+sh(r.property),true);
+  send({action:"rentpay",row:id,amount:r.rent,paid:1});
+}
+function openPaySheet(id){
+  var r=findRent(id); if(!r) return; payT=id; moveT=null;
+  var mn=MONF[+String(r.month||todayISO()).slice(5,7)-1];
+  var html='<div class="grab"></div><h3>'+esc(r.property)+'</h3><div class="h4">'+mn+' rent — '+
+    money(r.rent)+' expected'+(r.received>0&&!r.paid?' · '+money(r.received)+' in so far':'')+'</div>';
+  if(!r.paid) html+='<div class="payfull" onclick="payFull()">'+
+    (r.received>0?'Rest came in — '+money(r.rent-r.received)+' more':'Paid in full — '+money(r.rent))+'</div>';
+  html+='<div class="opt" onclick="showPart()">Partial payment…</div>'+
+    '<div id="partbox" style="display:none"><input class="fld" id="partin" inputmode="decimal" placeholder="$ amount received (total for '+mn+')">'+
+    '<div class="payfull amberbtn" onclick="savePart()">Save partial</div></div>';
+  if(r.paid||r.received>0) html+='<div class="opt" onclick="payNone()">Mark not paid</div>';
+  html+='<div class="opt cancel" onclick="closeSheet()">Cancel</div>';
+  document.getElementById("sc").innerHTML=html;
+  document.getElementById("sheet").classList.add("on");
+}
+function payFull(){ var r=findRent(payT); if(!r) return;
+  r.paid=true; r.received=r.rent; r.datereceived=todayISO(); closeSheet(); draw();
+  send({action:"rentpay",row:r.id,amount:r.rent,paid:1}); }
+function payNone(){ var r=findRent(payT); if(!r) return;
+  r.paid=false; r.received=0; r.datereceived=null; closeSheet(); draw();
+  send({action:"rentpay",row:r.id,amount:0,paid:0}); }
+function showPart(){ var b=document.getElementById("partbox"); if(b)b.style.display="";
+  var i=document.getElementById("partin"); if(i)i.focus(); }
+function savePart(){ var r=findRent(payT); if(!r) return;
+  var v=pnum((document.getElementById("partin")||{}).value); if(!(v>0)) return;
+  if(v>r.rent) v=r.rent;
+  r.received=v; r.paid=(v>=r.rent); r.datereceived=todayISO(); closeSheet(); draw();
+  send({action:"rentpay",row:r.id,amount:v,paid:r.paid?1:0}); }
 
 /* ===================================================================== actions (optimistic) */
 function flag(id){
@@ -1042,9 +1244,10 @@ function progHTML(){
   if(get("side","0")==="1"){ document.getElementById("side").classList.add("min");
     document.getElementById("grip").innerHTML="&rsaquo;&rsaquo;"; }
   view="work";   /* always open on Business — hard default, last-used tab is ignored on purpose */
+  propMode=get("pm","tasks");
   draw();
   refresh(true);
-  setInterval(function(){ refresh(false); }, CFG.POLL);
+  setInterval(function(){ refresh(false); if(view==="prop"&&propMode==="tracker") rentFeed(false); }, CFG.POLL);
   document.addEventListener("visibilitychange",function(){
     if(!document.hidden && Date.now()-lastFeed>15000) refresh(false);
   });
