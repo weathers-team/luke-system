@@ -846,7 +846,7 @@ function trackerHTML(){
   if(!rready) return '<div class="loading">Loading the tracker…</div>';
   if(rerr) return '<div class="allclear">Can’t reach the tracker. '+esc(rerr)+
     ' <u style="cursor:pointer;color:var(--accent)" onclick="rentFeed(true)">Try again</u></div>';
-  var h="", mk=todayISO().slice(0,7), mn=MONF[+mk.slice(5,7)-1];
+  var h="", mk=(function(){var d=new Date();d.setDate(d.getDate()+1);return d.getFullYear()+"-"+pad(d.getMonth()+1);})(), mn=MONF[+mk.slice(5,7)-1];
   var rows=R.rent.filter(function(r){ return (r.month||"").slice(0,7)===mk; });
   rows.sort(function(a,b){ return a.property<b.property?-1:1; });
   var got=rows.filter(function(r){return r.paid;}).length;
