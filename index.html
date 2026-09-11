@@ -366,6 +366,12 @@ h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.2px;}
 .tpleft b{color:var(--dim);font-weight:600;}
 .tpstat{font-size:12px;color:var(--faint);margin-top:10px;}
 .tpstat.warn{color:var(--amber);}
+.mortgage-list .pchip{background:transparent;font-family:inherit;}
+.mortgage-list .cb{padding:0;}
+.mortgage-list .cb:not(.paid){background:transparent;}
+.mortgage-list .cb:disabled{opacity:.5;cursor:wait;}
+.mortgage-list .rsub{color:var(--dim);}
+.mortgage-list .ramt{cursor:default;}
 </style>
 </head>
 <body>
@@ -590,6 +596,8 @@ function refresh(force){
 
 /* rent + property info feed — same guards as refresh() */
 function rentFeed(force){
+  if(mortgagePending) return;
+  var mortgageVersion=mortgageRevision;
   if(!force){
     if(sending||Q.length) return;
     if(Date.now()-lastWrite < CFG.QUIET) return;
@@ -599,7 +607,7 @@ function rentFeed(force){
     .then(function(r){ return r.json(); })
     .then(function(j){
       if(!j || j.ok!==true) throw new Error((j&&j.error)||"unknown error");
-      R={rent:j.rent||[],props:j.props||[]};
+      R={rent:j.rent||[],props:j.props||[],mortgages:mortgageVersion===mortgageRevision?(j.mortgages||null):R.mortgages};
       try{ save("rcache",JSON.stringify(R)); }catch(e){}
       rready=true; rerr=""; lastRentFeed=Date.now();
       draw();
@@ -831,17 +839,74 @@ function nv(a){
 }
 function go(v){ view=v; pick={}; cur=null; addOpen=null;
   document.getElementById("scroll").scrollTop=0; save("view",v);
-  if(v==="prop"&&propMode==="tracker"&&!rready) rentFeed(true);
+  if(v==="prop"&&propMode==="tracker") rentFeed(true);
   if(v==="work") tpFeed(false);
   draw(); }
 
 /* ===================================================================== property tracker */
-function setPM(m){ propMode=m; save("pm",m); if(m==="tracker"&&!rready) rentFeed(true); draw(); }
+function setPM(m){ propMode=m; save("pm",m); if(m==="tracker") rentFeed(true); draw(); }
 function shAddr(s){ return String(s).replace(/ (Dr|Trail|Ct|Rd|Court|Road|Drive)$/,""); }
 function leasePast(s){
   var m=String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if(!m) return false;
   return new Date(+m[3],+m[1]-1,+m[2]) < new Date();
 }
+
+/* Monthly mortgage checklist: confirmed server records, separate from rent. */
+var mortgageMonth=null, mortgagePending=false, mortgageRevision=0;
+function paymentMonth(){ return plusISO(1).slice(0,7); }
+function mortgageShift(delta){
+  var a=(mortgageMonth||paymentMonth()).split("-");
+  var d=new Date(+a[0],+a[1]-1+delta,1);
+  var mk=d.getFullYear()+"-"+pad(d.getMonth()+1);
+  mortgageMonth=mk===paymentMonth()?null:mk;
+  draw();
+}
+function mortgageHTML(defaultMonth){
+  var mk=mortgageMonth||defaultMonth;
+  var label=MONF[+mk.slice(5,7)-1]+" "+mk.slice(0,4);
+  var props=R.props.filter(function(p){return pnum(p["Mortgage payment"])>0||String(p["Mortgage company"]||"").trim();});
+  props.sort(function(a,b){return String(a.Property||"").localeCompare(String(b.Property||""));});
+  var records=R.mortgages, count=0;
+  props.forEach(function(p){if(records&&records[mk+":"+p.id]&&records[mk+":"+p.id].paid)count++;});
+  var h='<div class="lane mortgage-list"><div class="lh"><span class="n">Mortgages paid — '+label+'</span>'+
+    '<span class="c">'+(records?count+' of '+props.length+' paid':'')+'</span></div>'+
+    '<div class="pchips"><button class="pchip" type="button" aria-label="Previous mortgage month" onclick="mortgageShift(-1)">‹ Previous</button>'+
+    (mortgageMonth?'<button class="pchip" type="button" onclick="mortgageMonth=null;draw()">Current month</button>':'')+
+    '<button class="pchip" type="button" aria-label="Next mortgage month" onclick="mortgageShift(1)">Next ›</button></div>';
+  if(!records) return h+'<div class="allclear">Mortgage records haven’t loaded. <u onclick="rentFeed(true)" style="cursor:pointer;color:var(--accent)">Try again</u></div></div>';
+  if(!props.length) return h+'<div class="allclear">No mortgage details in Property info yet.</div></div>';
+  props.forEach(function(p){
+    var rec=records[mk+":"+p.id]||{}, paid=rec.paid===true;
+    var amount=pnum(p["Mortgage payment"]);
+    var args=esc(JSON.stringify(p.id)+','+JSON.stringify(mk));
+    h+='<div class="r rt"><button type="button" class="cb '+(paid?'paid':'')+'" role="checkbox" aria-checked="'+paid+
+      '" aria-label="'+esc(p.Property||"Property")+' mortgage for '+label+'"'+(mortgagePending?' disabled':'')+
+      ' onclick="mortgageTap('+args+')"></button><div class="t">'+esc(p.Property||"Property")+
+      (p["Mortgage company"]?'<span class="rsub">'+esc(p["Mortgage company"])+'</span>':'')+
+      '</div><span class="ramt'+(paid?'':' late')+'">'+(amount>0?money(amount)+' · ':'')+
+      (paid?'Paid'+(rec.datepaid?' · '+fmt(rec.datepaid):''):'Not marked paid')+'</span></div>';
+  });
+  return h+'</div>';
+}
+function mortgageTap(id,mk){
+  if(mortgagePending||!R.mortgages) return;
+  var p=R.props.filter(function(x){return x.id===id;})[0]; if(!p)return;
+  var key=mk+":"+id, paid=!(R.mortgages[key]&&R.mortgages[key].paid);
+  mortgagePending=true; mortgageRevision++; draw();
+  fetch(url({action:"mortgagepay",row:id,month:mk,paid:paid?1:0}),{cache:"no-store"})
+    .then(function(r){return r.json();})
+    .then(function(j){
+      if(!j||j.ok!==true||!j.record) throw new Error((j&&j.error)||"Save failed");
+      R.mortgages[key]=j.record; mortgagePending=false; mortgageRevision++;
+      save("rcache",JSON.stringify(R)); draw();
+      toast((paid?"Mortgage marked paid — ":"Mortgage unmarked — ")+sh(p.Property||"Property"),true);
+    })
+    .catch(function(){
+      mortgagePending=false; mortgageRevision++; R.mortgages=null; draw();
+      toast("Couldn’t confirm the mortgage update. Reload the tracker before retrying.",true);
+    });
+}
+
 function trackerHTML(){
   if(!rready) return '<div class="loading">Loading the tracker…</div>';
   if(rerr) return '<div class="allclear">Can’t reach the tracker. '+esc(rerr)+
@@ -869,6 +934,7 @@ function trackerHTML(){
        '<span onclick="openPaySheet(\''+r.id+'\')">'+right+'</span></div>';
   });
   h+='</div>';
+  h+=mortgageHTML(mk);
   var ov=R.props.filter(function(p){ return pnum(p["Monthly rent"])>0; });
   if(ov.length){
     h+='<div class="lane"><div class="lh"><span class="n">All properties</span></div>'+
@@ -1334,13 +1400,16 @@ function progHTML(){
   }catch(e){}
   try{
     var rc=get("rcache",null);
-    if(rc){ var ro=JSON.parse(rc); R={rent:ro.rent||[],props:ro.props||[]}; rready=true; }
+    if(rc){ var ro=JSON.parse(rc); R={rent:ro.rent||[],props:ro.props||[],mortgages:ro.mortgages||null}; rready=true; }
   }catch(e){}
   draw();
   refresh(true);
   if(view==="work") tpFeed(true);
+  if(view==="prop"&&propMode==="tracker") rentFeed(true);
   setInterval(function(){ refresh(false); if(view==="prop"&&propMode==="tracker") rentFeed(false); if(view==="work") tpFeed(false); }, CFG.POLL);
+  setInterval(function(){ if(!document.hidden&&view==="prop"&&propMode==="tracker") draw(); },60000);
   document.addEventListener("visibilitychange",function(){
+    if(!document.hidden&&view==="prop"&&propMode==="tracker"){ draw(); rentFeed(false); }
     if(!document.hidden && Date.now()-lastFeed>15000) refresh(false);
   });
   window.addEventListener("online", function(){ bannerOff(); pump(); refresh(true); });
