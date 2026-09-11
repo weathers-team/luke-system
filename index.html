@@ -646,7 +646,7 @@ function tpRow(g,ml){
 }
 function tpHTML(){
   var ml = (TP && TP.monthLabel) ? TP.monthLabel : "";
-  var h = '<div class="lane"><div class="lh"><span class="n">TEAM PROJECTS</span>'+
+  var h = '<div class="lane"><div class="lh"><span class="n">TEAM MARKETING</span>'+
           '<span class="c">'+esc(ml)+'</span><span class="sp"></span></div><div class="body">';
   if(TP && TP.groups){
     h += ["A","B"].map(function(k){ return TP.groups[k] ? tpRow(TP.groups[k],ml) : ""; }).join("");
