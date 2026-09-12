@@ -940,7 +940,7 @@ function trackerHTML(){
   rows.forEach(function(r){
     var cls=r.paid?"paid":(r.received>0?"half":"");
     var right, sub="";
-    if(r.paid) right='<span class="ramt">'+money(r.rent)+(r.datereceived?' · '+fmt(r.datereceived):'')+'</span>';
+    if(r.paid) right='<span class="ramt">'+money(r.rent)+' · Paid'+(r.datereceived?' · '+fmt(r.datereceived):'')+'</span>';
     else if(r.received>0){
       right='<span class="ramt part">'+money(r.rent-r.received)+' left</span>';
       sub='<span class="rsub">partial — '+money(r.received)+' of '+money(r.rent)+
