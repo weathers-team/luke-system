@@ -372,6 +372,8 @@ h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.2px;}
 .mortgage-list .cb:disabled{opacity:.5;cursor:wait;}
 .mortgage-list .rsub{color:var(--dim);}
 .mortgage-list .ramt{cursor:default;}
+.mortgage-pay{color:var(--accent);text-decoration:none;}
+.mortgage-pay:hover{text-decoration:underline;}
 #repeat-save,.sheet button.opt{width:100%;font:inherit;text-align:left;}
 #repeat-save:disabled{opacity:.6;cursor:wait;}
 #repeat-frequency{color:var(--text);background:var(--panel);}
@@ -860,7 +862,7 @@ function leasePast(s){
 
 /* Monthly mortgage checklist: confirmed server records, separate from rent. */
 var mortgageMonth=null, mortgagePending=false, mortgageRevision=0;
-function paymentMonth(){ return plusISO(1).slice(0,7); }
+function paymentMonth(){ return todayISO().slice(0,7); }
 function mortgageShift(delta){
   var a=(mortgageMonth||paymentMonth()).split("-");
   var d=new Date(+a[0],+a[1]-1+delta,1);
@@ -868,15 +870,23 @@ function mortgageShift(delta){
   mortgageMonth=mk===paymentMonth()?null:mk;
   draw();
 }
-function mortgageHTML(defaultMonth){
-  var mk=mortgageMonth||defaultMonth;
+function mortgagePaymentURL(company){
+  var c=String(company||"").toLowerCase().replace(/[^a-z]/g,"");
+  if(c.indexOf("mrcooper")!==-1)return "https://www.rocketmortgage.com/pre-sign";
+  if(c.indexOf("shellpoint")!==-1)return "https://myaccount.shellpointmtg.com/signin?returnUrl=%2Flinkaloan";
+  if(c.indexOf("crosscountry")!==-1)return "https://servicing.crosscountrymortgage.com/servicing/overview";
+  if(c.indexOf("pnc")!==-1)return "https://secure.pnc.com/web-auth/signin/authenticate";
+  return "";
+}
+function mortgageHTML(){
+  var mk=mortgageMonth||paymentMonth();
   var label=MONF[+mk.slice(5,7)-1]+" "+mk.slice(0,4);
   var props=R.props.filter(function(p){return pnum(p["Mortgage payment"])>0||String(p["Mortgage company"]||"").trim();});
   props.sort(function(a,b){return String(a.Property||"").localeCompare(String(b.Property||""));});
   var records=R.mortgages, count=0;
   props.forEach(function(p){if(records&&records[mk+":"+p.id]&&records[mk+":"+p.id].paid)count++;});
-  var h='<div class="lane mortgage-list"><div class="lh"><span class="n">Mortgages paid — '+label+'</span>'+
-    '<span class="c">'+(records?count+' of '+props.length+' paid':'')+'</span></div>'+
+  var h='<div class="lane mortgage-list"><div class="lh"><span class="n">Mortgages — '+MONF[+mk.slice(5,7)-1]+'</span>'+
+    '<span class="c">'+(records?count+' paid'+(props.length-count?' · '+(props.length-count)+' out':''):'')+'</span></div>'+
     '<div class="pchips"><button class="pchip" type="button" aria-label="Previous mortgage month" onclick="mortgageShift(-1)">‹ Previous</button>'+
     (mortgageMonth?'<button class="pchip" type="button" onclick="mortgageMonth=null;draw()">Current month</button>':'')+
     '<button class="pchip" type="button" aria-label="Next mortgage month" onclick="mortgageShift(1)">Next ›</button></div>';
@@ -884,14 +894,14 @@ function mortgageHTML(defaultMonth){
   if(!props.length) return h+'<div class="allclear">No mortgage details in Property info yet.</div></div>';
   props.forEach(function(p){
     var rec=records[mk+":"+p.id]||{}, paid=rec.paid===true;
-    var amount=pnum(p["Mortgage payment"]);
+    var amount=pnum(p["Mortgage payment"]), payURL=mortgagePaymentURL(p["Mortgage company"]);
     var args=esc(JSON.stringify(p.id)+','+JSON.stringify(mk));
     h+='<div class="r rt"><button type="button" class="cb '+(paid?'paid':'')+'" role="checkbox" aria-checked="'+paid+
       '" aria-label="'+esc(p.Property||"Property")+' mortgage for '+label+'"'+(mortgagePending?' disabled':'')+
       ' onclick="mortgageTap('+args+')"></button><div class="t">'+esc(p.Property||"Property")+
-      (p["Mortgage company"]?'<span class="rsub">'+esc(p["Mortgage company"])+'</span>':'')+
+      (payURL?'<span class="rsub"><a class="mortgage-pay" href="'+esc(payURL)+'" target="_blank" rel="noopener noreferrer" aria-label="Pay mortgage for '+esc(p.Property||'Property')+'">Pay mortgage ↗</a> · '+esc(p["Mortgage company"])+'</span>':'')+
       '</div><span class="ramt'+(paid?'':' late')+'">'+(amount>0?money(amount)+' · ':'')+
-      (paid?'Paid'+(rec.datepaid?' · '+fmt(rec.datepaid):''):'Not marked paid')+'</span></div>';
+      (paid?'Paid'+(rec.datepaid?' · '+fmt(rec.datepaid):''):'not yet')+'</span></div>';
   });
   return h+'</div>';
 }
@@ -941,7 +951,7 @@ function trackerHTML(){
        '<span onclick="openPaySheet(\''+r.id+'\')">'+right+'</span></div>';
   });
   h+='</div>';
-  h+=mortgageHTML(mk);
+  h+=mortgageHTML();
   var ov=R.props.filter(function(p){ return pnum(p["Monthly rent"])>0; });
   if(ov.length){
     h+='<div class="lane"><div class="lh"><span class="n">All properties</span></div>'+
