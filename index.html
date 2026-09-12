@@ -372,6 +372,9 @@ h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.2px;}
 .mortgage-list .cb:disabled{opacity:.5;cursor:wait;}
 .mortgage-list .rsub{color:var(--dim);}
 .mortgage-list .ramt{cursor:default;}
+#repeat-save,.sheet button.opt{width:100%;font:inherit;text-align:left;}
+#repeat-save:disabled{opacity:.6;cursor:wait;}
+#repeat-frequency{color:var(--text);background:var(--panel);}
 </style>
 </head>
 <body>
@@ -541,6 +544,7 @@ function pump(){
     .then(function(j){
       if(!j || j.ok!==true) throw new Error((j&&j.error)||"unknown error");
       Q.shift(); sending=false; lastWrite=Date.now();
+      if(job.after)job.after(j);
       if(lastErr){ bannerOff(); }
       status(); pump();
     })
@@ -562,6 +566,8 @@ function normalize(s){
     notuntil:s.notuntil||null, wait:s.waiting||null, area:s.area||null, dd:s.donedate||null };
 }
 function refresh(force){
+  if(repeatSaving)return;
+  var repeatVersion=repeatRevision;
   if(!force){
     if(sending||Q.length) return;                      // never read over pending writes
     if(Date.now()-lastWrite < CFG.QUIET) return;       // Coda needs a beat to settle
@@ -573,6 +579,7 @@ function refresh(force){
     .then(function(j){
       feedBusy=false;
       if(!j || j.ok!==true) throw new Error((j&&j.error)||"unknown error");
+      if(repeatVersion!==repeatRevision)return;
       T=j.tasks.map(normalize);
       try{ save("cache",JSON.stringify(j.tasks)); }catch(e){}
       if(firstOpen){
@@ -1038,8 +1045,7 @@ function tog(id){
   var t=find(id); if(!t) return;
   if(!t.done && t.rep){
     snap("Completed "+t.rep.toLowerCase()+" task");
-    var add={Daily:1,Weekly:7,Monthly:30,Quarterly:90,Yearly:365}[t.rep]||1;
-    t.due=plusISO(add); t.dd=todayISO(); t.reb=t.due;
+    t.due=nextRepeatDate(todayISO(),t.rep); t.dd=todayISO(); t.reb=t.due;
     draw();
     send({action:"didit",list:t.s,row:t.id,repeat:t.rep});
     setTimeout(function(){ var x=find(id); if(x){ x.reb=null; draw(); } },2800);
@@ -1173,6 +1179,7 @@ function menu(e,id){
     '<div onclick="flag(\''+id+'\');hide()">'+(t.imp?"Remove important":"Mark important")+'<span>i</span></div>'+
     '<div onclick="tog(\''+id+'\');hide()">'+(t.done?"Mark not done":"Mark done")+'<span>space</span></div>'+
     '<div onclick="edit(\''+id+'\');hide()">Edit task<span>return</span></div>'+
+    '<div onclick="hide();openRepeat(\''+id+'\')">Repeat'+(t.rep?': '+t.rep:'…')+'</div>'+
     '<div class="sep"></div>'+
     LANES.map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+L+'<span>'+(i+1)+'</span></div>'; }).join("")+
     '<div class="sep"></div>'+
@@ -1234,6 +1241,56 @@ function doMove(L){
   if(moveMulti){ mv(Object.keys(pick),L); closeSheet(); return; }
   mv([moveT],L); closeSheet();
 }
+function nextRepeatDate(iso,rep){
+  var a=iso.split("-"), d=new Date(+a[0],+a[1]-1,+a[2],12);
+  if(rep==="Daily"||rep==="Weekly") d.setDate(d.getDate()+(rep==="Daily"?1:7));
+  else {
+    var months={Monthly:1,Quarterly:3,Yearly:12}[rep];
+    if(!months) throw new Error("Unknown repeat interval");
+    var day=d.getDate(); d.setDate(1); d.setMonth(d.getMonth()+months);
+    d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));
+  }
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
+
+var repeatTarget=null, repeatSaving=false, repeatRevision=0;
+function repeatDateVisibility(v){document.getElementById("repeat-date-box").hidden=!v;}
+function openRepeat(id){
+  var t=find(id); if(!t||repeatSaving)return;
+  if(t.tmp){toast("This task is still saving. Try again in a moment.",true);return;}
+  hide(); repeatTarget=id;
+  document.getElementById("sc").innerHTML='<div class="grab"></div><h3>Repeat task</h3><div class="h4">'+esc(t.t)+'</div>'+
+    '<label for="repeat-frequency">Repeat</label><select class="fld" id="repeat-frequency" onchange="repeatDateVisibility(this.value)">'+
+    ["","Daily","Weekly","Monthly","Quarterly","Yearly"].map(function(v){return '<option value="'+v+'"'+((t.rep||"")===v?' selected':'')+'>'+(v||"Does not repeat")+'</option>';}).join("")+'</select>'+
+    '<div id="repeat-date-box"'+(t.rep?'':' hidden')+'><label for="repeat-date">First / next due date</label><input class="fld" type="date" id="repeat-date" value="'+esc(t.due||todayISO())+'">'+
+    '<div class="h4">After you check it off, its next due date moves forward from the completion date by this interval.</div></div>'+
+    '<div id="repeat-error" role="alert" style="color:var(--alarm)"></div><button type="button" class="opt" id="repeat-save" onclick="saveRepeat()">Save repeat setting</button>'+
+    '<button type="button" class="opt cancel" onclick="closeSheet()">Cancel</button>';
+  document.getElementById("sheet").classList.add("on");
+}
+function saveRepeat(){
+  var t=find(repeatTarget); if(!t||repeatSaving)return;
+  var rep=document.getElementById("repeat-frequency").value, date=document.getElementById("repeat-date");
+  if(rep&&(!date.value||!date.checkValidity())){document.getElementById("repeat-error").textContent="Choose a valid due date.";return;}
+  var id=t.id, due=date.value;
+  repeatSaving=true; repeatRevision++;
+  var button=document.getElementById("repeat-save");button.disabled=true;button.textContent="Saving…";
+  fetch(url({action:"setrepeat",list:t.s,row:id,repeat:rep,due:due}),{cache:"no-store"})
+    .then(function(r){return r.json();})
+    .then(function(j){
+      if(!j||j.ok!==true)throw new Error((j&&j.error)||"Save failed");
+      repeatSaving=false;repeatRevision++;lastWrite=Date.now();
+      var task=find(id);if(task){task.rep=j.repeat||null;if(rep){task.due=j.due;task.done=false;}}
+      if(document.getElementById("repeat-save"))closeSheet();
+      draw();toast(rep?"Repeats "+rep.toLowerCase():"Repeat turned off",true);
+      setTimeout(function(){refresh(true);},2500);
+    }).catch(function(){
+      repeatSaving=false;repeatRevision++;
+      var b=document.getElementById("repeat-save");if(b){b.disabled=false;b.textContent="Save repeat setting";document.getElementById("repeat-error").textContent="Couldn’t confirm the save. Try again.";}
+      else toast("Couldn’t confirm the repeat setting. Reload to check it.",true);
+    });
+}
+
 function openRowSheet(id){
   var t=find(id); if(!t) return;
   document.getElementById("sc").innerHTML='<div class="grab"></div>'+
@@ -1242,6 +1299,7 @@ function openRowSheet(id){
     '<div class="opt" onclick="closeSheet();tog(\''+id+'\')">'+(t.done?"Mark not done":"Mark done")+'</div>'+
     '<div class="opt" onclick="closeSheet();edit(\''+id+'\')">Edit task</div>'+
     '<div class="opt" onclick="closeSheet();openMove(\''+id+'\')">Move to…</div>'+
+    '<div class="opt" onclick="openRepeat(\''+id+'\')">Repeat'+(t.rep?': '+t.rep:'…')+'</div>'+
     (t.p?'<div class="opt" onclick="closeSheet();nest(\''+id+'\',-1)">Pull out of parent</div>':'')+
     '<div class="opt cancel" onclick="closeSheet()">Cancel</div>';
   document.getElementById("sheet").classList.add("on");
@@ -1311,6 +1369,7 @@ document.addEventListener("keydown",function(e){
     pick={}; editing=null; addOpen=null; hide();
     document.getElementById("modal").classList.remove("on"); closeSheet(); draw(); return;
   }
+  if(e.target.closest&&e.target.closest("#sheet"))return;
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="z"){ e.preventDefault(); undo(); return; }
   if(typing) return;
   if(e.key==="/"){ e.preventDefault(); document.getElementById("q").focus(); return; }
