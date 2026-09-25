@@ -454,6 +454,7 @@ var CFG = {
 };
 
 var LANES=["INBOX","TODAY","THIS WEEK","MONTHLY","THIS YEAR","LONG TERM GOALS"];
+function laneLabel(lane){ return lane==="MONTHLY" ? MONF[new Date().getMonth()].toUpperCase() : lane; }
 var SHORT={work:"BUS",life:"PER",prop:"PROP"};
 var NM={work:"Business",life:"Personal",prop:"Property"};
 var BANG="‼︎";
@@ -725,7 +726,7 @@ function row(t,depth,showLane){
   var bits=[];
   /* only label what isn't already obvious from where you're standing:
      the lane chip only in Now (which mixes lanes), the list tag only where lists mix */
-  if(showLane) bits.push('<span class="chip" data-stop="1" onclick="openMove(\''+t.id+'\')">'+t.l+'</span>');
+  if(showLane) bits.push('<span class="chip" data-stop="1" onclick="openMove(\''+t.id+'\')">'+laneLabel(t.l)+'</span>');
   if((view==="inbox"||view==="now") && !depth) bits.push('<span class="tag">'+SHORT[t.s]+'</span>');
   var m=meta(t); if(m) bits.push(m);
 
@@ -757,7 +758,7 @@ function group(title,items,cls,showLane,laneKey){
   /* an empty lane collapses to just its header — six half-empty lanes of "—" is
      a lot of dead screen to scroll past on a phone */
   return '<div class="lane'+(shut[title]?" shut":"")+(items.length?"":" bare")+'">'+
-    '<div class="lh"><span class="n '+(cls||"")+'" onclick="shut[\''+title+'\']=!shut[\''+title+'\'];draw()">'+title+'</span>'+
+    '<div class="lh"><span class="n '+(cls||"")+'" onclick="shut[\''+title+'\']=!shut[\''+title+'\'];draw()">'+laneLabel(title)+'</span>'+
       '<span class="c">'+n+'</span><span class="sp"></span>'+plus+
       (laneKey?'<span class="k">'+(LANES.indexOf(laneKey)+1)+'</span>':'')+'</div>'+
     '<div class="body">'+qa+
@@ -862,7 +863,17 @@ function leasePast(s){
 
 /* Monthly mortgage checklist: confirmed server records, separate from rent. */
 var mortgageMonth=null, mortgagePending=false, mortgageRevision=0;
-function paymentMonth(){ return todayISO().slice(0,7); }
+function paymentMonth(){
+  var d=new Date(); d.setDate(d.getDate()+4);
+  return d.getFullYear()+"-"+pad(d.getMonth()+1);
+}
+var rentMonth=null;
+function rentShift(delta){
+  var a=(rentMonth||paymentMonth()).split("-");
+  var d=new Date(+a[0],+a[1]-1+delta,1);
+  var mk=d.getFullYear()+"-"+pad(d.getMonth()+1);
+  rentMonth=mk===paymentMonth()?null:mk; draw();
+}
 function mortgageShift(delta){
   var a=(mortgageMonth||paymentMonth()).split("-");
   var d=new Date(+a[0],+a[1]-1+delta,1);
@@ -885,10 +896,10 @@ function mortgageHTML(){
   props.sort(function(a,b){return String(a.Property||"").localeCompare(String(b.Property||""));});
   var records=R.mortgages, count=0;
   props.forEach(function(p){if(records&&records[mk+":"+p.id]&&records[mk+":"+p.id].paid)count++;});
-  var h='<div class="lane mortgage-list"><div class="lh"><span class="n">Mortgages — '+MONF[+mk.slice(5,7)-1]+'</span>'+
+  var h='<div class="lane mortgage-list"><div class="lh"><span class="n">Mortgages — '+MONF[+mk.slice(5,7)-1]+' '+mk.slice(0,4)+'</span>'+
     '<span class="c">'+(records?count+' paid'+(props.length-count?' · '+(props.length-count)+' out':''):'')+'</span></div>'+
     '<div class="pchips"><button class="pchip" type="button" aria-label="Previous mortgage month" onclick="mortgageShift(-1)">‹ Previous</button>'+
-    (mortgageMonth?'<button class="pchip" type="button" onclick="mortgageMonth=null;draw()">Current month</button>':'')+
+    (mortgageMonth?'<button class="pchip" type="button" onclick="mortgageMonth=null;draw()">Default month</button>':'')+
     '<button class="pchip" type="button" aria-label="Next mortgage month" onclick="mortgageShift(1)">Next ›</button></div>';
   if(!records) return h+'<div class="allclear">Mortgage records haven’t loaded. <u onclick="rentFeed(true)" style="cursor:pointer;color:var(--accent)">Try again</u></div></div>';
   if(!props.length) return h+'<div class="allclear">No mortgage details in Property info yet.</div></div>';
@@ -928,14 +939,17 @@ function trackerHTML(){
   if(!rready) return '<div class="loading">Loading the tracker…</div>';
   if(rerr) return '<div class="allclear">Can’t reach the tracker. '+esc(rerr)+
     ' <u style="cursor:pointer;color:var(--accent)" onclick="rentFeed(true)">Try again</u></div>';
-  var h="", mk=(function(){var d=new Date();d.setDate(d.getDate()+1);return d.getFullYear()+"-"+pad(d.getMonth()+1);})(), mn=MONF[+mk.slice(5,7)-1];
+  var h="", mk=rentMonth||paymentMonth(), mn=MONF[+mk.slice(5,7)-1];
   var rows=R.rent.filter(function(r){ return (r.month||"").slice(0,7)===mk; });
   rows.sort(function(a,b){ return a.property<b.property?-1:1; });
   var got=rows.filter(function(r){return r.paid;}).length;
   var part=rows.filter(function(r){return !r.paid&&r.received>0;}).length;
   var out=rows.length-got-part;
-  h+='<div class="lane"><div class="lh"><span class="n">Rent — '+mn+'</span><span class="c">'+
-     got+' in'+(part?' · '+part+' partial':'')+(out?' · '+out+' out':'')+'</span></div>';
+  h+='<div class="lane"><div class="lh"><span class="n">Rent — '+mn+' '+mk.slice(0,4)+'</span><span class="c">'+
+     got+' in'+(part?' · '+part+' partial':'')+(out?' · '+out+' out':'')+'</span></div>'+
+    '<div class="pchips"><button class="pchip" type="button" aria-label="Previous rent month" onclick="rentShift(-1)">‹ Previous</button>'+
+    (rentMonth?'<button class="pchip" type="button" onclick="rentMonth=null;draw()">Default month</button>':'')+
+    '<button class="pchip" type="button" aria-label="Next rent month" onclick="rentShift(1)">Next ›</button></div>';
   if(!rows.length) h+='<div class="allclear">No '+mn+' rows in the Coda Rent table yet.</div>';
   rows.forEach(function(r){
     var cls=r.paid?"paid":(r.received>0?"half":"");
@@ -1002,7 +1016,39 @@ function infoHTML(p){
     });
     if(rows) h+='<div class="lh"><span class="n">'+sec[0]+'</span></div>'+rows;
   });
+  var link=safeLeaseURL(p["Lease agreement"]);
+  h+='<div class="pkv"><span>Lease agreement</span><span>'+
+    (link?'<a href="'+esc(link)+'" target="_blank" rel="noopener noreferrer">Open lease ↗</a> · ':'')+
+    '<button type="button" onclick="openLease('+esc(JSON.stringify(p.id))+')">'+(link?'Edit link':'Add link')+'</button></span></div>';
   return h;
+}
+function safeLeaseURL(value){
+  try{var u=new URL(String(value||''));return u.protocol==='https:'&&!u.username&&!u.password?u.href:'';}catch(e){return '';}
+}
+var leaseTarget=null, leaseSaving=false;
+function openLease(id){
+  if(leaseSaving)return;
+  var p=R.props.filter(function(x){return x.id===id;})[0];if(!p)return;
+  leaseTarget=id;
+  document.getElementById('sc').innerHTML='<div class="grab"></div><h3>Lease agreement</h3><div class="h4">'+esc(p.Property||'Property')+'</div>'+
+    '<label for="lease-url">Google Drive or other document link</label><input class="fld" id="lease-url" type="url" placeholder="https://…" value="'+esc(p['Lease agreement']||'')+'">'+
+    '<div class="h4">Leave blank to remove the link. The document’s existing sharing permissions still apply.</div><div id="lease-error" role="alert" style="color:var(--alarm)"></div>'+
+    '<button type="button" class="opt" id="lease-save" onclick="saveLease()">Save link</button><button type="button" class="opt cancel" onclick="closeSheet()">Cancel</button>';
+  document.getElementById('sheet').classList.add('on');
+}
+function saveLease(){
+  if(leaseSaving)return;
+  var input=document.getElementById('lease-url'),raw=input.value.trim(),link=safeLeaseURL(raw),id=leaseTarget;
+  if(raw&&(!link||link.length>2048)){document.getElementById('lease-error').textContent='Enter a valid https document link.';return;}
+  leaseSaving=true;document.getElementById('lease-save').disabled=true;
+  fetch(url({action:'leaselink',row:id,url:link}),{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+    if(!j||j.ok!==true||j.row!==id||j.url!==link)throw new Error('Save not confirmed');
+    var p=R.props.filter(function(x){return x.id===id;})[0];if(p)p['Lease agreement']=j.url;
+    leaseSaving=false;save('rcache',JSON.stringify(R));closeSheet();draw();toast(link?'Lease link saved':'Lease link removed',true);
+  }).catch(function(){
+    leaseSaving=false;var e=document.getElementById('lease-error'),b=document.getElementById('lease-save');
+    if(e)e.textContent='Couldn’t confirm the save. Reload the tracker to check before retrying.';if(b)b.disabled=false;
+  });
 }
 function rentTap(id){
   var r=findRent(id); if(!r) return;
@@ -1191,7 +1237,7 @@ function menu(e,id){
     '<div onclick="edit(\''+id+'\');hide()">Edit task<span>return</span></div>'+
     '<div onclick="hide();openRepeat(\''+id+'\')">Repeat'+(t.rep?': '+t.rep:'…')+'</div>'+
     '<div class="sep"></div>'+
-    LANES.map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+L+'<span>'+(i+1)+'</span></div>'; }).join("")+
+    LANES.map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+laneLabel(L)+'<span>'+(i+1)+'</span></div>'; }).join("")+
     '<div class="sep"></div>'+
     '<div onclick="nest(\''+id+'\',1);hide()">Make sub-task<span>tab</span></div>'+
     (t.p?'<div onclick="nest(\''+id+'\',-1);hide()">Pull out<span>⇧tab</span></div>':'')+
@@ -1222,7 +1268,7 @@ function openMove(id,multi){
     }).join("")+'</div>' : '';
   var here=(!cap&&!multi&&id)?(find(id)||{}).l:null;
   document.getElementById("sc").innerHTML='<div class="grab"></div>'+head+capUI+
-    LANES.map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+L+
+    LANES.map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+laneLabel(L)+
       (here===L?'<span class="tick">✓</span>':'')+'</div>'; }).join("")+
     '<div class="opt cancel" onclick="closeSheet()">'+(cap?'Done':'Cancel')+'</div>';
   document.getElementById("sheet").classList.add("on");
@@ -1304,7 +1350,7 @@ function saveRepeat(){
 function openRowSheet(id){
   var t=find(id); if(!t) return;
   document.getElementById("sc").innerHTML='<div class="grab"></div>'+
-    '<h3>'+esc(sh(t.t))+'</h3><div class="h4">'+NM[t.s]+' · '+t.l+'</div>'+
+    '<h3>'+esc(sh(t.t))+'</h3><div class="h4">'+NM[t.s]+' · '+laneLabel(t.l)+'</div>'+
     '<div class="opt" onclick="closeSheet();flag(\''+id+'\')">'+(t.imp?"Remove important":"Mark important")+'</div>'+
     '<div class="opt" onclick="closeSheet();tog(\''+id+'\')">'+(t.done?"Mark not done":"Mark done")+'</div>'+
     '<div class="opt" onclick="closeSheet();edit(\''+id+'\')">Edit task</div>'+
@@ -1414,7 +1460,7 @@ function dtg(){
   document.getElementById("tgtxt").textContent=t.t;
   document.getElementById("tggrid").innerHTML=
     LANES.filter(function(L){return L!=="INBOX";}).map(function(L){
-      return '<div class="tgb" onclick="tgm(\''+L+'\')">'+L+'</div>'; }).join("")+
+      return '<div class="tgb" onclick="tgm(\''+L+'\')">'+laneLabel(L)+'</div>'; }).join("")+
     '<div class="tgb done" onclick="tgd()">Already done</div>'+
     '<div class="tgb skip" onclick="ti++;dtg()">Leave in Inbox →</div>';
 }
@@ -1476,7 +1522,8 @@ function progHTML(){
   if(view==="work") tpFeed(true);
   if(view==="prop"&&propMode==="tracker") rentFeed(true);
   setInterval(function(){ refresh(false); if(view==="prop"&&propMode==="tracker") rentFeed(false); if(view==="work") tpFeed(false); }, CFG.POLL);
-  setInterval(function(){ if(!document.hidden&&view==="prop"&&propMode==="tracker") draw(); },60000);
+  var lastCalendarDay=todayISO();
+  setInterval(function(){ if(!document.hidden){ var day=todayISO(); if(day!==lastCalendarDay||(view==="prop"&&propMode==="tracker")){lastCalendarDay=day;draw();} } },60000);
   document.addEventListener("visibilitychange",function(){
     if(!document.hidden&&view==="prop"&&propMode==="tracker"){ draw(); rentFeed(false); }
     if(!document.hidden && Date.now()-lastFeed>15000) refresh(false);
