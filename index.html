@@ -377,6 +377,12 @@ h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.2px;}
 #repeat-save,.sheet button.opt{width:100%;font:inherit;text-align:left;}
 #repeat-save:disabled{opacity:.6;cursor:wait;}
 #repeat-frequency{color:var(--text);background:var(--panel);}
+.opportunity-view .inner{max-width:none;}
+.opportunity-view .scroll{padding:22px 24px 90px;}
+.opportunity-toolbar{display:flex;align-items:center;gap:16px;justify-content:space-between;margin:0 0 14px;color:var(--dim);font-size:13px;}
+.opportunity-toolbar a{color:var(--accent);white-space:nowrap;}
+.opportunity-sheet{width:100%;height:calc(100dvh - 150px);min-height:420px;border:1px solid var(--line);border-radius:10px;background:white;}
+@media(max-width:860px){.tabbar .tb{font-size:10px;min-width:0;}.opportunity-view .scroll{padding:16px 12px 110px;}.opportunity-toolbar{align-items:flex-start;flex-direction:column;gap:8px;}.opportunity-sheet{height:calc(100dvh - 230px);}}
 </style>
 </head>
 <body>
@@ -778,10 +784,10 @@ function counts(){
 function draw(){
   flat=[];
   var c=counts();
-  var titles={now:"Now",inbox:"Inbox",work:"Business",life:"Personal",prop:"Property"};
+  var titles={now:"Now",inbox:"Inbox",work:"Business",life:"Personal",prop:"Property",opportunities:"Opportunities"};
   var TABS=[["inbox",ICONS.inbox,"Inbox",c.inbox],["now",ICONS.now,"Now",c.now],
             ["work",ICONS.work,"Business",c.work],["life",ICONS.life,"Personal",c.life],
-            ["prop",ICONS.prop,"Property",c.prop]];
+            ["prop",ICONS.prop,"Property",c.prop],["opportunities",ICONS.work,"Opportunities",""]];
 
   document.getElementById("tabs").innerHTML=TABS.map(function(a){
     return '<div class="tb '+(view===a[0]?"on":"")+'" onclick="go(\''+a[0]+'\')">'+
@@ -794,7 +800,7 @@ function draw(){
   document.getElementById("h1").textContent=titles[view];
   var np=Object.keys(pick).length;
   document.getElementById("m").textContent = np ? (np+" selected")
-    : (view==="now"?"most important first":view==="inbox"?"sort it or send it back":NM[view]+" list");
+    : (view==="now"?"most important first":view==="inbox"?"sort it or send it back":view==="opportunities"?"Buyers, sellers and referrals":NM[view]+" list");
   document.getElementById("selbar").classList.toggle("on",np>0);
   document.getElementById("selct").textContent=np+" selected";
 
@@ -805,7 +811,8 @@ function draw(){
       '<div class="go">Triage →</div></div>' : '';
 
   var h="";
-  if(!ready){ h='<div class="loading">Loading your tasks…</div>'; }
+  if(view==="opportunities"){ h=opportunitiesHTML(); }
+  else if(!ready){ h='<div class="loading">Loading your tasks…</div>'; }
   else if(view==="now"){
     var t1=T.filter(function(t){return !t.done&&!t.p&&t.imp&&inQ(t);});
     var t2=T.filter(function(t){return !t.done&&!t.p&&!t.imp&&isOD(t)&&inQ(t);});
@@ -835,12 +842,19 @@ function draw(){
       });
     }
   }
-  var tracker=(view==="prop"&&propMode==="tracker");
+  var tracker=(view==="prop"&&propMode==="tracker")||view==="opportunities";
+  document.querySelector(".wrap").classList.toggle("opportunity-view",view==="opportunities");
+  document.querySelector(".fab").style.visibility=view==="opportunities"?"hidden":"";
   document.querySelector(".searchwrap").style.display=tracker?"none":"";
   document.getElementById("body").innerHTML = h + (ready&&!tracker?progHTML():"");
   if(addOpen){ var e=document.getElementById("qa-"+addOpen.replace(/ /g,"_")); if(e)e.focus(); }
   if(editing){ var i=document.querySelector('.r[data-id="'+editing+'"] input'); if(i){i.focus();i.select();} }
   status();
+}
+function opportunitiesHTML(){
+  return '<div class="opportunity-toolbar"><span>Track people, timing, connections and appointments in your shared opportunity sheet.</span>'+
+    '<a href="https://docs.google.com/spreadsheets/d/1WvU85_KksHSRsMM5liBHC-zLPxpI-VlJxWagTAmE3Pw/edit?gid=1102841579#gid=1102841579" target="_blank" rel="noopener noreferrer">Open full sheet ↗</a></div>'+
+    '<iframe class="opportunity-sheet" title="Opportunity tracker" src="https://docs.google.com/spreadsheets/d/1WvU85_KksHSRsMM5liBHC-zLPxpI-VlJxWagTAmE3Pw/edit?gid=1102841579&amp;rm=minimal#gid=1102841579" loading="lazy"></iframe>';
 }
 function nv(a){
   return '<div class="nv '+(a[0]==="now"?"now ":"")+(view===a[0]?"on ":"")+
