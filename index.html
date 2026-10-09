@@ -846,7 +846,8 @@ function draw(){
   document.querySelector(".wrap").classList.toggle("opportunity-view",view==="opportunities");
   document.querySelector(".fab").style.visibility=view==="opportunities"?"hidden":"";
   document.querySelector(".searchwrap").style.display=tracker?"none":"";
-  document.getElementById("body").innerHTML = h + (ready&&!tracker?progHTML():"");
+  if(view!=="opportunities" || !document.querySelector(".opportunity-sheet"))
+    document.getElementById("body").innerHTML = h + (ready&&!tracker?progHTML():"");
   if(addOpen){ var e=document.getElementById("qa-"+addOpen.replace(/ /g,"_")); if(e)e.focus(); }
   if(editing){ var i=document.querySelector('.r[data-id="'+editing+'"] input'); if(i){i.focus();i.select();} }
   status();
