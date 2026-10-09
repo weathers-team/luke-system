@@ -454,7 +454,8 @@ var CFG = {
 };
 
 var LANES=["INBOX","TODAY","THIS WEEK","MONTHLY","THIS YEAR","LONG TERM GOALS"];
-function lanesForList(list){ return list==="life" ? ["INBOX","WISH LIST"].concat(LANES.slice(1)) : LANES; }
+function wishContainer(){ return T.find(function(t){return t.s==="life"&&t.t==="WISH LIST for Luke"&&!t.p;}); }
+function isWishContainer(t){ return t.s==="life"&&t.t==="WISH LIST for Luke"&&!t.p; }
 function laneLabel(lane){ return lane==="MONTHLY" ? MONF[new Date().getMonth()].toUpperCase() : lane; }
 var SHORT={work:"BUS",life:"PER",prop:"PROP"};
 var NM={work:"Business",life:"Personal",prop:"Property"};
@@ -770,7 +771,7 @@ function group(title,items,cls,showLane,laneKey){
 /* ===================================================================== draw */
 function counts(){
   var o={now:0,inbox:0,work:0,life:0,prop:0};
-  T.forEach(function(t){ if(t.done||t.p) return;
+  T.forEach(function(t){ if(t.done||t.p||isWishContainer(t)) return;
     if(t.imp||isOD(t)||isTd(t)) o.now++;
     if(t.l==="INBOX") o.inbox++;
     o[t.s]++; });
@@ -819,7 +820,7 @@ function draw(){
       if(t3.length) h+=group("DUE TODAY",t3,"",true);
     }
   } else if(view==="inbox"){
-    h+=group("INBOX",T.filter(function(t){return !t.p&&!t.done&&t.l==="INBOX"&&inQ(t);}),"",false,"INBOX");
+    h+=group("INBOX",T.filter(function(t){return !t.p&&!t.done&&!isWishContainer(t)&&t.l==="INBOX"&&inQ(t);}),"",false,"INBOX");
   } else {
     if(view==="prop"){
       h+='<div class="pseg"><b class="'+(propMode==="tasks"?"on":"")+'" onclick="setPM(\'tasks\')">Tasks</b>'+
@@ -828,10 +829,11 @@ function draw(){
     if(view==="prop"&&propMode==="tracker"){
       h+=trackerHTML();
     } else {
-      lanesForList(view).forEach(function(L){
-        var it=T.filter(function(t){return t.s===view&&t.l===L&&!t.p&&!t.done&&inQ(t);});
+      LANES.forEach(function(L){
+        var it=T.filter(function(t){return t.s===view&&t.l===L&&!t.p&&!t.done&&!isWishContainer(t)&&inQ(t);});
         if(qv()&&!it.length) return;
         h+=group(L,it,"",false,L);
+        if(view==="life"&&L==="INBOX"){var wish=wishContainer();h+=group("WISH LIST",wish?kids(wish.id).filter(function(t){return !t.done&&inQ(t);}):[],"",false,"WISH LIST");}
         if(view==="work"&&L==="THIS YEAR") h+=tpHTML();
       });
     }
@@ -1175,15 +1177,16 @@ function nestOn(dragged,target){
   draw();
 }
 function allSubs(v){ T.forEach(function(t){ if(kids(t.id).length) openK[t.id]=v; }); draw(); }
-function addTask(text,lane,listKey){
+function addTask(text,lane,listKey,parentTask){
   var v=(text||"").trim(); if(!v) return;
   snap("Added “"+sh(v)+"”");
   var tmp="tmp-"+Date.now()+"-"+Math.floor(performance.now()*1000%100000);
-  T.push({id:tmp,s:listKey,t:v,l:lane,done:false,imp:false,p:null,rep:null,
+  T.push({id:tmp,s:listKey,t:v,l:lane,done:false,imp:false,p:parentTask?(wishContainer()||{}).id:null,rep:null,
           due:null,notuntil:null,wait:null,area:null,dd:null,tmp:true});
   draw();
   /* the real row id comes back on the next feed; until then it's local-only */
-  Q.push({p:{action:"add",list:listKey,lane:lane,task:v},tries:0,after:function(){
+  Q.push({p:{action:"add",list:listKey,lane:lane,task:v},tries:0,after:function(j){
+    if(parentTask&&j.added&&j.added[0]) send({action:"setparent",list:listKey,row:j.added[0],parent:parentTask});
     setTimeout(function(){ refresh(true); },2500);
   }});
   lastWrite=Date.now(); status(); pump();
@@ -1192,7 +1195,7 @@ function qaKey(e,L){
   if(e.key==="Escape"){ addOpen=null; draw(); return; }
   if(e.key!=="Enter") return;
   var el=e.target; if(!el.value.trim()) return;
-  addTask(el.value, L, isList()?view:"work");
+  if(L==="WISH LIST"){var wish=wishContainer();if(!wish){toast("Wish list is still loading",true);return;}addTask(el.value,"INBOX","life",wish.t);}else addTask(el.value, L, isList()?view:"work");
   el.value=""; draw();
   var n=document.getElementById("qa-"+L.replace(/ /g,"_")); if(n)n.focus();
 }
@@ -1238,7 +1241,7 @@ function menu(e,id){
     '<div onclick="edit(\''+id+'\');hide()">Edit task<span>return</span></div>'+
     '<div onclick="hide();openRepeat(\''+id+'\')">Repeat'+(t.rep?': '+t.rep:'…')+'</div>'+
     '<div class="sep"></div>'+
-    lanesForList(t.s).map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+laneLabel(L)+'<span>'+(i+1)+'</span></div>'; }).join("")+
+    LANES.map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+laneLabel(L)+'<span>'+(i+1)+'</span></div>'; }).join("")+
     '<div class="sep"></div>'+
     '<div onclick="nest(\''+id+'\',1);hide()">Make sub-task<span>tab</span></div>'+
     (t.p?'<div onclick="nest(\''+id+'\',-1);hide()">Pull out<span>⇧tab</span></div>':'')+
@@ -1269,7 +1272,7 @@ function openMove(id,multi){
     }).join("")+'</div>' : '';
   var here=(!cap&&!multi&&id)?(find(id)||{}).l:null;
   document.getElementById("sc").innerHTML='<div class="grab"></div>'+head+capUI+
-    lanesForList(cap?capS:(id&&find(id)?find(id).s:view)).map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+laneLabel(L)+
+    LANES.map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+laneLabel(L)+
       (here===L?'<span class="tick">✓</span>':'')+'</div>'; }).join("")+
     '<div class="opt cancel" onclick="closeSheet()">'+(cap?'Done':'Cancel')+'</div>';
   document.getElementById("sheet").classList.add("on");
