@@ -454,6 +454,7 @@ var CFG = {
 };
 
 var LANES=["INBOX","TODAY","THIS WEEK","MONTHLY","THIS YEAR","LONG TERM GOALS"];
+function lanesForList(list){ return list==="life" ? ["INBOX","WISH LIST"].concat(LANES.slice(1)) : LANES; }
 function laneLabel(lane){ return lane==="MONTHLY" ? MONF[new Date().getMonth()].toUpperCase() : lane; }
 var SHORT={work:"BUS",life:"PER",prop:"PROP"};
 var NM={work:"Business",life:"Personal",prop:"Property"};
@@ -760,7 +761,7 @@ function group(title,items,cls,showLane,laneKey){
   return '<div class="lane'+(shut[title]?" shut":"")+(items.length?"":" bare")+'">'+
     '<div class="lh"><span class="n '+(cls||"")+'" onclick="shut[\''+title+'\']=!shut[\''+title+'\'];draw()">'+laneLabel(title)+'</span>'+
       '<span class="c">'+n+'</span><span class="sp"></span>'+plus+
-      (laneKey?'<span class="k">'+(LANES.indexOf(laneKey)+1)+'</span>':'')+'</div>'+
+      (laneKey&&LANES.indexOf(laneKey)>=0?'<span class="k">'+(LANES.indexOf(laneKey)+1)+'</span>':'')+'</div>'+
     '<div class="body">'+qa+
       sortImp(items).map(function(t){return row(t,0,showLane);}).join("")+
     '</div></div>';
@@ -827,7 +828,7 @@ function draw(){
     if(view==="prop"&&propMode==="tracker"){
       h+=trackerHTML();
     } else {
-      LANES.forEach(function(L){
+      lanesForList(view).forEach(function(L){
         var it=T.filter(function(t){return t.s===view&&t.l===L&&!t.p&&!t.done&&inQ(t);});
         if(qv()&&!it.length) return;
         h+=group(L,it,"",false,L);
@@ -1237,7 +1238,7 @@ function menu(e,id){
     '<div onclick="edit(\''+id+'\');hide()">Edit task<span>return</span></div>'+
     '<div onclick="hide();openRepeat(\''+id+'\')">Repeat'+(t.rep?': '+t.rep:'…')+'</div>'+
     '<div class="sep"></div>'+
-    LANES.map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+laneLabel(L)+'<span>'+(i+1)+'</span></div>'; }).join("")+
+    lanesForList(t.s).map(function(L,i){ return '<div onclick="mv(selection(),\''+L+'\');hide()">Send to '+laneLabel(L)+'<span>'+(i+1)+'</span></div>'; }).join("")+
     '<div class="sep"></div>'+
     '<div onclick="nest(\''+id+'\',1);hide()">Make sub-task<span>tab</span></div>'+
     (t.p?'<div onclick="nest(\''+id+'\',-1);hide()">Pull out<span>⇧tab</span></div>':'')+
@@ -1268,7 +1269,7 @@ function openMove(id,multi){
     }).join("")+'</div>' : '';
   var here=(!cap&&!multi&&id)?(find(id)||{}).l:null;
   document.getElementById("sc").innerHTML='<div class="grab"></div>'+head+capUI+
-    LANES.map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+laneLabel(L)+
+    lanesForList(cap?capS:(id&&find(id)?find(id).s:view)).map(function(L){ return '<div class="opt" onclick="doMove(\''+L+'\')">'+laneLabel(L)+
       (here===L?'<span class="tick">✓</span>':'')+'</div>'; }).join("")+
     '<div class="opt cancel" onclick="closeSheet()">'+(cap?'Done':'Cancel')+'</div>';
   document.getElementById("sheet").classList.add("on");
